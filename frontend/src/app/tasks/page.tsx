@@ -3,12 +3,12 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 
-import { fetchTasks, refreshAutoPool, runIncremental, type TaskLogItem } from "@/lib/api";
+import { fetchTasks, type TaskLogItem } from "@/lib/api";
+import { formatUtc8 } from "@/lib/time";
 
 export default function TasksPage() {
   const [items, setItems] = useState<TaskLogItem[]>([]);
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
   const [taskTypeFilter, setTaskTypeFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -36,42 +36,12 @@ export default function TasksPage() {
     void load();
   }, [taskTypeFilter, statusFilter]);
 
-  async function onRunRefreshAuto() {
-    setBusy(true);
-    setMessage("触发自动池刷新中...");
-    try {
-      const result = await refreshAutoPool();
-      setMessage(`自动池刷新完成: ${JSON.stringify(result)}`);
-      await load();
-    } catch (err) {
-      setMessage(`自动池刷新失败: ${(err as Error).message}`);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function onRunIncremental() {
-    setBusy(true);
-    setMessage("触发增量采集中...");
-    try {
-      const result = await runIncremental();
-      setMessage(`增量采集已触发: ${JSON.stringify(result)}`);
-      await load();
-    } catch (err) {
-      setMessage(`增量采集失败: ${(err as Error).message}`);
-    } finally {
-      setBusy(false);
-    }
-  }
-
   return (
     <main>
       <h1>任务监控</h1>
       <div className="row gap">
         <Link href="/pool" className="btn ghost">返回池子</Link>
-        <button className="btn" disabled={busy} onClick={onRunRefreshAuto}>触发 refresh-auto</button>
-        <button className="btn" disabled={busy} onClick={onRunIncremental}>触发 incremental-run</button>
-        <button className="btn ghost" disabled={busy || loading} onClick={() => void load()}>刷新列表</button>
+        <button className="btn ghost" disabled={loading} onClick={() => void load()}>刷新列表</button>
       </div>
 
       <section className="panel">
@@ -121,7 +91,7 @@ export default function TasksPage() {
                     <StatusPill status={row.status} />
                   </td>
                   <td>{row.duration_seconds == null ? "-" : row.duration_seconds.toFixed(2)}</td>
-                  <td>{formatUtc(row.started_at)}</td>
+                  <td>{formatUtc8(row.started_at)}</td>
                   <td><JsonDetails value={row.scope} /></td>
                   <td><JsonDetails value={row.summary} /></td>
                   <td className="error-cell">{row.error_message ?? "-"}</td>
@@ -145,10 +115,6 @@ function StatusPill({ status }: { status: "running" | "success" | "failed" }) {
         ? "pill failed"
         : "pill running";
   return <span className={cls}>{status}</span>;
-}
-
-function formatUtc(value: string): string {
-  return new Date(value).toISOString().replace("T", " ").replace("Z", " UTC");
 }
 
 function JsonDetails({ value }: { value: Record<string, unknown> }) {

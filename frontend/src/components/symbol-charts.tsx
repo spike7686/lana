@@ -9,13 +9,25 @@ import {
   type IChartApi,
   type ISeriesApi,
   type LineData,
+  type Time,
   type UTCTimestamp,
 } from "lightweight-charts";
 
 import type { KlinePoint, OIPoint } from "@/lib/api";
+import { formatUnixSecondsUtc8, formatUnixSecondsUtc8Tick } from "@/lib/time";
 
 function toUtcTimestamp(value: string): UTCTimestamp {
   return Math.floor(new Date(value).getTime() / 1000) as UTCTimestamp;
+}
+
+function timeToUnixSeconds(value: Time): number {
+  if (typeof value === "number") {
+    return value;
+  }
+  if (typeof value === "object" && value !== null && "year" in value) {
+    return Math.floor(Date.UTC(value.year, value.month - 1, value.day) / 1000);
+  }
+  return Math.floor(new Date(value).getTime() / 1000);
 }
 
 export function SymbolCharts({
@@ -80,7 +92,16 @@ export function SymbolCharts({
       rightPriceScale: { borderColor: "#cbd5e1" },
       leftPriceScale: { visible: true, borderColor: "#cbd5e1" },
       overlayPriceScales: { borderColor: "#cbd5e1" },
-      timeScale: { borderColor: "#cbd5e1", timeVisible: true, secondsVisible: false },
+      timeScale: {
+        borderColor: "#cbd5e1",
+        timeVisible: true,
+        secondsVisible: false,
+        tickMarkFormatter: (time: Time) => formatUnixSecondsUtc8Tick(timeToUnixSeconds(time)),
+      },
+      localization: {
+        locale: "zh-CN",
+        timeFormatter: (time: Time) => formatUnixSecondsUtc8(timeToUnixSeconds(time)),
+      },
       crosshair: { mode: 1 },
     });
 

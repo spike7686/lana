@@ -10,6 +10,7 @@ import {
   type PoolItem,
   refreshAutoPool,
 } from "@/lib/api";
+import { formatUtc8 } from "@/lib/time";
 
 export default function PoolPage() {
   const [items, setItems] = useState<PoolItem[]>([]);
@@ -189,7 +190,7 @@ export default function PoolPage() {
                   <td>{formatTierLabel(row.tier)}</td>
                   <td>{formatStatusLabel(row.status)}</td>
                   <td>{formatSourceLabel(row.source)}</td>
-                  <td>{formatUtc(row.updated_at)}</td>
+                  <td>{formatUtc8(row.updated_at)}</td>
                   <td>
                     <div className="row gap">
                       <button className="btn ghost" disabled={busy} onClick={() => onManualRemove(row.symbol)}>删除</button>
@@ -203,10 +204,6 @@ export default function PoolPage() {
       </section>
     </main>
   );
-}
-
-function formatUtc(value: string): string {
-  return new Date(value).toISOString().replace("T", " ").replace("Z", " UTC");
 }
 
 function formatTierLabel(value: string | null): string {

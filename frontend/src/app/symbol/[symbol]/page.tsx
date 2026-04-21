@@ -14,6 +14,7 @@ import {
   type OIPoint,
 } from "@/lib/api";
 import { SymbolCharts } from "@/components/symbol-charts";
+import { formatUtc8 } from "@/lib/time";
 
 type Interval = "15m" | "1h";
 
@@ -139,5 +140,5 @@ export default function SymbolDetailPage() {
 }
 
 function formatUtc(value: string): string {
-  return new Date(value).toISOString().replace("T", " ").replace("Z", " UTC");
+  return formatUtc8(value);
 }
