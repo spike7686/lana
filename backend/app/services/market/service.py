@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional, Sequence, Tuple, Type
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, desc, select
 from sqlalchemy.orm import Session
 
 from app.models.kline import Kline1h, Kline15m, OI1h, OI15m
@@ -21,6 +21,19 @@ OI_MODEL_MAP = {
 
 class MarketService:
     @staticmethod
+    def _apply_time_order_and_limit(
+        stmt: Select,
+        time_col,
+        start: Optional[datetime],
+        end: Optional[datetime],
+        limit: int,
+    ) -> Select:
+        # No explicit time window: fetch latest N rows, then caller re-sorts asc for chart display.
+        if start is None and end is None:
+            return stmt.order_by(desc(time_col)).limit(limit)
+        return stmt.order_by(time_col.asc()).limit(limit)
+
+    @staticmethod
     def get_kline(
         db: Session,
         symbol: str,
@@ -37,8 +50,17 @@ class MarketService:
         if end is not None:
             stmt = stmt.where(model.open_time <= end)
 
-        stmt = stmt.order_by(model.open_time.asc()).limit(limit)
-        return list(db.scalars(stmt))
+        stmt = MarketService._apply_time_order_and_limit(
+            stmt=stmt,
+            time_col=model.open_time,
+            start=start,
+            end=end,
+            limit=limit,
+        )
+        rows = list(db.scalars(stmt))
+        if start is None and end is None:
+            rows.reverse()
+        return rows
 
     @staticmethod
     def get_oi(
@@ -57,8 +79,17 @@ class MarketService:
         if end is not None:
             stmt = stmt.where(model.ts <= end)
 
-        stmt = stmt.order_by(model.ts.asc()).limit(limit)
-        return list(db.scalars(stmt))
+        stmt = MarketService._apply_time_order_and_limit(
+            stmt=stmt,
+            time_col=model.ts,
+            start=start,
+            end=end,
+            limit=limit,
+        )
+        rows = list(db.scalars(stmt))
+        if start is None and end is None:
+            rows.reverse()
+        return rows
 
     @staticmethod
     def get_kline_csv_rows(
@@ -146,9 +177,18 @@ class MarketService:
             stmt = stmt.where(model.ts >= start)
         if end is not None:
             stmt = stmt.where(model.ts <= end)
-        stmt = stmt.order_by(model.ts.asc()).limit(limit)
+        stmt = MarketService._apply_time_order_and_limit(
+            stmt=stmt,
+            time_col=model.ts,
+            start=start,
+            end=end,
+            limit=limit,
+        )
+        rows = list(db.scalars(stmt))
+        if start is None and end is None:
+            rows.reverse()
 
         result = {}
-        for row in db.scalars(stmt):
+        for row in rows:
             result[row.ts] = row
         return result
