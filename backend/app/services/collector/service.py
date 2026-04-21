@@ -61,8 +61,14 @@ class CollectorService:
                 end_ms=end_ms,
                 end_ms_1h=end_ms_1h,
             )
-            profile_row = ProfileService.get_profile(db=db, symbol=normalized_symbol, refresh=False)
-            summary["profile_cached"] = bool(profile_row and profile_row.extra is not None)
+            try:
+                profile_row = ProfileService.get_profile(db=db, symbol=normalized_symbol, refresh=False)
+                summary["profile_cached"] = bool(profile_row and profile_row.extra is not None)
+                summary["profile_error"] = None
+            except Exception as profile_exc:
+                # Profile metadata is non-critical for bootstrap data collection.
+                summary["profile_cached"] = False
+                summary["profile_error"] = str(profile_exc)
 
             CollectorService._finalize_task(db=db, task=task, status="success", summary=summary)
             return task

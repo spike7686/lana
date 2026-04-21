@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     binance_http_timeout_seconds: float = 20.0
     coingecko_api_base_url: str = "https://api.coingecko.com/api/v3"
     coingecko_http_timeout_seconds: float = 20.0
+    coingecko_min_request_interval_seconds: float = 1.2
+    coingecko_retry_count: int = 4
+    coingecko_retry_base_delay_seconds: float = 1.5
     scheduler_enabled: bool = True
     scheduler_timezone: str = "UTC"
     scheduler_interval_minutes: int = 15
