@@ -7,6 +7,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.core.config import get_settings
@@ -18,6 +19,16 @@ _coingecko_last_request_ts = 0.0
 
 
 class ProfileService:
+    @staticmethod
+    def _apply_payload(row: AssetProfile, payload: Dict[str, Any]) -> None:
+        row.name = payload.get("name")
+        row.sector = payload.get("sector")
+        row.description = payload.get("description")
+        row.website = payload.get("website")
+        row.twitter = payload.get("twitter")
+        row.extra = payload.get("extra", {})
+        row.updated_at = datetime.now(timezone.utc)
+
     @staticmethod
     def get_profile(db: Session, symbol: str, refresh: bool = False) -> AssetProfile:
         normalized_symbol = symbol.upper().strip()
@@ -44,21 +55,29 @@ class ProfileService:
             db.refresh(empty)
             return empty
 
+        created = False
         if existing is None:
             existing = AssetProfile(symbol=normalized_symbol)
             db.add(existing)
+            created = True
 
-        existing.name = payload.get("name")
-        existing.sector = payload.get("sector")
-        existing.description = payload.get("description")
-        existing.website = payload.get("website")
-        existing.twitter = payload.get("twitter")
-        existing.extra = payload.get("extra", {})
-        existing.updated_at = datetime.now(timezone.utc)
-
-        db.commit()
-        db.refresh(existing)
-        return existing
+        ProfileService._apply_payload(existing, payload)
+        try:
+            db.commit()
+            db.refresh(existing)
+            return existing
+        except IntegrityError:
+            # Concurrent insert race on same symbol; re-load then update.
+            db.rollback()
+            if not created:
+                raise
+            existing = db.scalar(select(AssetProfile).where(AssetProfile.symbol == normalized_symbol))
+            if existing is None:
+                raise
+            ProfileService._apply_payload(existing, payload)
+            db.commit()
+            db.refresh(existing)
+            return existing
 
     @staticmethod
     def _fetch_profile_payload_for_symbol(symbol: str) -> Optional[Dict[str, Any]]:

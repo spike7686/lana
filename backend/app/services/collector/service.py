@@ -67,12 +67,14 @@ class CollectorService:
                 summary["profile_error"] = None
             except Exception as profile_exc:
                 # Profile metadata is non-critical for bootstrap data collection.
+                db.rollback()
                 summary["profile_cached"] = False
                 summary["profile_error"] = str(profile_exc)
 
             CollectorService._finalize_task(db=db, task=task, status="success", summary=summary)
             return task
         except Exception as exc:
+            db.rollback()
             CollectorService._finalize_task(
                 db=db,
                 task=task,
@@ -127,6 +129,7 @@ class CollectorService:
             CollectorService._finalize_task(db=db, task=task, status="success", summary=summary)
             return task
         except Exception as exc:
+            db.rollback()
             CollectorService._finalize_task(
                 db=db,
                 task=task,
@@ -153,6 +156,7 @@ class CollectorService:
             CollectorService._finalize_task(db=db, task=task, status="success", summary=summary)
             return task
         except Exception as exc:
+            db.rollback()
             CollectorService._finalize_task(
                 db=db,
                 task=task,
@@ -228,6 +232,7 @@ class CollectorService:
             CollectorService._finalize_task(db=db, task=task, status="success", summary=summary)
             return task
         except Exception as exc:
+            db.rollback()
             CollectorService._finalize_task(
                 db=db,
                 task=task,
