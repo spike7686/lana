@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import PlainTextResponse
@@ -12,6 +13,15 @@ from app.services.market.service import MarketService
 from app.services.profile.service import ProfileService
 
 router = APIRouter(prefix="/api", tags=["market"])
+
+
+def _build_content_disposition(filename: str) -> str:
+    # HTTP header fallback name must be latin-1 safe.
+    fallback = filename.encode("ascii", "ignore").decode("ascii").strip()
+    if not fallback:
+        fallback = "export.csv"
+    encoded = quote(filename, safe="")
+    return f"attachment; filename={fallback}; filename*=UTF-8''{encoded}"
 
 
 @router.get("/market/{symbol}/kline", response_model=KlineListResponse)
@@ -150,5 +160,5 @@ def export_symbol(
     return PlainTextResponse(
         "\n".join(csv_lines),
         media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename={filename}"},
+        headers={"Content-Disposition": _build_content_disposition(filename)},
     )
