@@ -45,6 +45,24 @@ class CollectorService:
         )
 
         try:
+            valid_symbols = CollectorService._fetch_valid_binance_symbols()
+            if valid_symbols and normalized_symbol not in valid_symbols:
+                CollectorService._finalize_task(
+                    db=db,
+                    task=task,
+                    status="success",
+                    summary={
+                        "symbol": normalized_symbol,
+                        "skipped_invalid_symbol": True,
+                        "skip_reason": "symbol_not_in_binance_usdt_perpetual",
+                        "kline_15m": 0,
+                        "kline_1h": 0,
+                        "oi_15m": 0,
+                        "oi_1h": 0,
+                    },
+                )
+                return task
+
             CollectorService._ensure_symbol_active(db=db, symbol=normalized_symbol)
 
             now = datetime.now(timezone.utc)
@@ -94,12 +112,29 @@ class CollectorService:
 
         try:
             symbols = CollectorService._list_active_symbols(db=db)
+            valid_symbols = CollectorService._fetch_valid_binance_symbols()
             now_ms = _to_ms(datetime.now(timezone.utc))
             end_ms_15m = _last_closed_ms(now_ms=now_ms, interval_ms=INTERVAL_MS["15m"])
             end_ms_1h = _last_closed_ms(now_ms=now_ms, interval_ms=INTERVAL_MS["1h"])
 
             symbol_summaries = []
+            skipped_invalid_symbol_list: List[str] = []
             for symbol in symbols:
+                if valid_symbols and symbol not in valid_symbols:
+                    symbol_summaries.append(
+                        {
+                            "symbol": symbol,
+                            "kline_15m": 0,
+                            "kline_1h": 0,
+                            "oi_15m": 0,
+                            "oi_1h": 0,
+                            "skipped_invalid_symbol": True,
+                            "skip_reason": "symbol_not_in_binance_usdt_perpetual",
+                        }
+                    )
+                    skipped_invalid_symbol_list.append(symbol)
+                    continue
+
                 start_map = {
                     "15m": CollectorService._next_start_ms(db, Kline15m, symbol, INTERVAL_MS["15m"]),
                     "1h": CollectorService._next_start_ms(db, Kline1h, symbol, INTERVAL_MS["1h"]),
@@ -124,6 +159,8 @@ class CollectorService:
             summary = {
                 "active_symbols": len(symbols),
                 "processed_symbols": len(symbol_summaries),
+                "skipped_invalid_symbols": len(skipped_invalid_symbol_list),
+                "skipped_invalid_symbol_list": skipped_invalid_symbol_list,
                 "symbols": symbol_summaries,
             }
             CollectorService._finalize_task(db=db, task=task, status="success", summary=summary)
@@ -351,14 +388,20 @@ class CollectorService:
             .order_by(AssetPool.symbol.asc())
         )
         candidates = list(db.scalars(stmt))
+        valid_symbols = CollectorService._fetch_valid_binance_symbols()
 
         initialized: List[str] = []
         initialized_items: List[dict] = []
         skipped_with_history = 0
+        skipped_invalid_symbol_list: List[str] = []
 
         for symbol in candidates:
             if len(initialized) >= max_symbols:
                 break
+
+            if valid_symbols and symbol not in valid_symbols:
+                skipped_invalid_symbol_list.append(symbol)
+                continue
 
             has_kline_15m = db.scalar(select(Kline15m.symbol).where(Kline15m.symbol == symbol).limit(1))
             if has_kline_15m:
@@ -382,7 +425,19 @@ class CollectorService:
             "initialized_symbols": initialized,
             "initialized_items": initialized_items,
             "skipped_with_history": skipped_with_history,
+            "skipped_invalid_symbols": len(skipped_invalid_symbol_list),
+            "skipped_invalid_symbol_list": skipped_invalid_symbol_list,
         }
+
+    @staticmethod
+    def _fetch_valid_binance_symbols() -> set[str]:
+        try:
+            client = BinanceFuturesClient()
+            tradable = client.fetch_usdt_perpetual_symbols()
+            return {item["symbol"] for item in tradable if item.get("symbol")}
+        except Exception:
+            # Fallback: if symbol universe fetch fails, do not block collection flow.
+            return set()
 
     @staticmethod
     def _collect_symbol_range(
