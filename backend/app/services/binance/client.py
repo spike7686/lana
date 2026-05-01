@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Dict, List, Optional
 
 import httpx
@@ -168,17 +168,31 @@ def paginate_open_interest(
     limit: int = 500,
 ) -> List[dict]:
     rows: List[dict] = []
-    cursor = start_ms
+    now_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+    # Binance openInterestHist is limited to recent 30d window.
+    min_start_ms = int((datetime.now(timezone.utc) - timedelta(days=30)).timestamp() * 1000)
+    cursor = max(start_ms, min_start_ms)
+    safe_end_ms = min(end_ms, now_ms)
 
-    while cursor <= end_ms:
-        batch_end = min(end_ms, cursor + period_ms * (limit - 1))
-        chunk = client.fetch_open_interest_hist(
-            symbol=symbol,
-            period=period,
-            start_time_ms=cursor,
-            end_time_ms=batch_end,
-            limit=limit,
-        )
+    if cursor > safe_end_ms:
+        return rows
+
+    while cursor <= safe_end_ms:
+        batch_end = min(safe_end_ms, cursor + period_ms * (limit - 1))
+        try:
+            chunk = client.fetch_open_interest_hist(
+                symbol=symbol,
+                period=period,
+                start_time_ms=cursor,
+                end_time_ms=batch_end,
+                limit=limit,
+            )
+        except httpx.HTTPStatusError as exc:
+            # Some symbols or time slices return 400 from Binance.
+            # Skip this OI batch so a single bad symbol/range won't break the whole task.
+            if exc.response is not None and exc.response.status_code == 400:
+                break
+            raise
 
         if not chunk:
             cursor = batch_end + period_ms
