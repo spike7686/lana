@@ -10,6 +10,9 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://lana:lana@localhost:5432/lana_dev"
     binance_fapi_base_url: str = "https://fapi.binance.com"
     binance_http_timeout_seconds: float = 20.0
+    binance_min_request_interval_seconds: float = 0.2
+    binance_retry_count: int = 2
+    binance_retry_base_delay_seconds: float = 1.2
     coingecko_api_base_url: str = "https://api.coingecko.com/api/v3"
     coingecko_http_timeout_seconds: float = 20.0
     coingecko_min_request_interval_seconds: float = 1.2
@@ -32,6 +35,8 @@ class Settings(BaseSettings):
     auto_init_new_symbols: bool = True
     auto_init_days: int = 30
     auto_init_max_symbols_per_cycle: int = 5
+    incremental_symbol_batch_size: int = 20
+    incremental_batch_sleep_seconds: float = 1.0
     cors_allow_origins: str = "http://127.0.0.1:3000,http://localhost:3000"
 
     model_config = SettingsConfigDict(

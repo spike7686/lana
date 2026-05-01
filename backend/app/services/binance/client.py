@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import time
+from threading import Lock
 from typing import Dict, List, Optional
 
 import httpx
@@ -13,10 +15,14 @@ INTERVAL_MS = {
     "1h": 60 * 60 * 1000,
 }
 
+_binance_rate_lock = Lock()
+_last_binance_request_at = 0.0
+
 
 class BinanceFuturesClient:
     def __init__(self) -> None:
         settings = get_settings()
+        self._settings = settings
         self._base_url = settings.binance_fapi_base_url.rstrip("/")
         self._timeout = settings.binance_http_timeout_seconds
 
@@ -98,10 +104,23 @@ class BinanceFuturesClient:
         )
 
     def _get_list(self, path: str, params: dict) -> list:
-        with httpx.Client(timeout=self._timeout) as client:
-            resp = client.get(f"{self._base_url}{path}", params=params)
-            resp.raise_for_status()
-            payload = resp.json()
+        max_attempts = max(1, self._settings.binance_retry_count + 1)
+        payload = None
+        for attempt in range(max_attempts):
+            _wait_binance_request_slot(self._settings.binance_min_request_interval_seconds)
+            with httpx.Client(timeout=self._timeout) as client:
+                resp = client.get(f"{self._base_url}{path}", params=params)
+            try:
+                resp.raise_for_status()
+                payload = resp.json()
+                break
+            except httpx.HTTPStatusError as exc:
+                status_code = exc.response.status_code if exc.response is not None else None
+                is_last = attempt >= max_attempts - 1
+                if status_code == 429 and not is_last:
+                    time.sleep(self._settings.binance_retry_base_delay_seconds * (attempt + 1))
+                    continue
+                raise
 
         if isinstance(payload, dict) and "code" in payload and "msg" in payload:
             raise RuntimeError(f"Binance API error: {payload}")
@@ -110,16 +129,43 @@ class BinanceFuturesClient:
         return payload
 
     def _get_dict(self, path: str, params: dict) -> dict:
-        with httpx.Client(timeout=self._timeout) as client:
-            resp = client.get(f"{self._base_url}{path}", params=params)
-            resp.raise_for_status()
-            payload = resp.json()
+        max_attempts = max(1, self._settings.binance_retry_count + 1)
+        payload = None
+        for attempt in range(max_attempts):
+            _wait_binance_request_slot(self._settings.binance_min_request_interval_seconds)
+            with httpx.Client(timeout=self._timeout) as client:
+                resp = client.get(f"{self._base_url}{path}", params=params)
+            try:
+                resp.raise_for_status()
+                payload = resp.json()
+                break
+            except httpx.HTTPStatusError as exc:
+                status_code = exc.response.status_code if exc.response is not None else None
+                is_last = attempt >= max_attempts - 1
+                if status_code == 429 and not is_last:
+                    time.sleep(self._settings.binance_retry_base_delay_seconds * (attempt + 1))
+                    continue
+                raise
 
         if isinstance(payload, dict) and "code" in payload and "msg" in payload:
             raise RuntimeError(f"Binance API error: {payload}")
         if not isinstance(payload, dict):
             raise RuntimeError(f"Unexpected Binance payload type: {type(payload).__name__}")
         return payload
+
+
+def _wait_binance_request_slot(min_interval_seconds: float) -> None:
+    if min_interval_seconds <= 0:
+        return
+
+    global _last_binance_request_at
+    with _binance_rate_lock:
+        now = time.monotonic()
+        elapsed = now - _last_binance_request_at
+        wait_seconds = min_interval_seconds - elapsed
+        if wait_seconds > 0:
+            time.sleep(wait_seconds)
+        _last_binance_request_at = time.monotonic()
 
 
 def paginate_klines(
@@ -136,13 +182,27 @@ def paginate_klines(
 
     while cursor <= end_ms:
         batch_end = min(end_ms, cursor + interval_ms * (limit - 1))
-        chunk = client.fetch_klines(
-            symbol=symbol,
-            interval=interval,
-            start_time_ms=cursor,
-            end_time_ms=batch_end,
-            limit=limit,
-        )
+        chunk: List[list] = []
+        retries = 3
+        for attempt in range(retries):
+            try:
+                chunk = client.fetch_klines(
+                    symbol=symbol,
+                    interval=interval,
+                    start_time_ms=cursor,
+                    end_time_ms=batch_end,
+                    limit=limit,
+                )
+                break
+            except httpx.HTTPStatusError as exc:
+                status_code = exc.response.status_code if exc.response is not None else None
+                if status_code == 429 and attempt < retries - 1:
+                    time.sleep(1.2 * (attempt + 1))
+                    continue
+                # Skip this symbol on persistent limit or bad request, don't break whole task.
+                if status_code in {400, 429}:
+                    return rows
+                raise
 
         if not chunk:
             cursor = batch_end + interval_ms
@@ -179,20 +239,27 @@ def paginate_open_interest(
 
     while cursor <= safe_end_ms:
         batch_end = min(safe_end_ms, cursor + period_ms * (limit - 1))
-        try:
-            chunk = client.fetch_open_interest_hist(
-                symbol=symbol,
-                period=period,
-                start_time_ms=cursor,
-                end_time_ms=batch_end,
-                limit=limit,
-            )
-        except httpx.HTTPStatusError as exc:
-            # Some symbols or time slices return 400 from Binance.
-            # Skip this OI batch so a single bad symbol/range won't break the whole task.
-            if exc.response is not None and exc.response.status_code == 400:
+        chunk: List[dict] = []
+        retries = 3
+        for attempt in range(retries):
+            try:
+                chunk = client.fetch_open_interest_hist(
+                    symbol=symbol,
+                    period=period,
+                    start_time_ms=cursor,
+                    end_time_ms=batch_end,
+                    limit=limit,
+                )
                 break
-            raise
+            except httpx.HTTPStatusError as exc:
+                status_code = exc.response.status_code if exc.response is not None else None
+                if status_code == 429 and attempt < retries - 1:
+                    time.sleep(1.2 * (attempt + 1))
+                    continue
+                # Some symbols/ranges are unsupported on Binance; skip that symbol silently.
+                if status_code in {400, 429}:
+                    return rows
+                raise
 
         if not chunk:
             cursor = batch_end + period_ms

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+import time
 from typing import Dict, List, Optional, Type
 
 from sqlalchemy import Select, func, select
@@ -11,6 +12,7 @@ from sqlalchemy.orm import Session
 from app.models.asset_pool import AssetPool
 from app.models.collector_task_log import CollectorTaskLog
 from app.models.kline import Kline1h, Kline15m, OI1h, OI15m
+from app.core.config import get_settings
 from app.services.binance.client import (
     BinanceFuturesClient,
     paginate_klines,
@@ -104,6 +106,7 @@ class CollectorService:
 
     @staticmethod
     def run_incremental(db: Session) -> CollectorTaskLog:
+        settings = get_settings()
         task = CollectorService._create_task(
             db=db,
             task_type="incremental_run",
@@ -119,7 +122,9 @@ class CollectorService:
 
             symbol_summaries = []
             skipped_invalid_symbol_list: List[str] = []
-            for symbol in symbols:
+            batch_size = max(1, settings.incremental_symbol_batch_size)
+            batch_sleep_seconds = max(0.0, settings.incremental_batch_sleep_seconds)
+            for idx, symbol in enumerate(symbols):
                 if valid_symbols and symbol not in valid_symbols:
                     symbol_summaries.append(
                         {
@@ -156,11 +161,17 @@ class CollectorService:
                 )
                 symbol_summaries.append(symbol_summary)
 
+                is_last_symbol = idx >= len(symbols) - 1
+                if not is_last_symbol and (idx + 1) % batch_size == 0 and batch_sleep_seconds > 0:
+                    time.sleep(batch_sleep_seconds)
+
             summary = {
                 "active_symbols": len(symbols),
                 "processed_symbols": len(symbol_summaries),
                 "skipped_invalid_symbols": len(skipped_invalid_symbol_list),
                 "skipped_invalid_symbol_list": skipped_invalid_symbol_list,
+                "batch_size": batch_size,
+                "batch_sleep_seconds": batch_sleep_seconds,
                 "symbols": symbol_summaries,
             }
             CollectorService._finalize_task(db=db, task=task, status="success", summary=summary)
