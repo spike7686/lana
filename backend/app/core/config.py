@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     gap_check_max_symbols: int = 300
     gap_check_hour: int = 0
     gap_check_minute: int = 20
+    gap_auto_backfill_enabled: bool = True
+    gap_auto_backfill_only_missing: bool = True
+    gap_auto_backfill_hours: int = 24
+    gap_auto_backfill_max_symbols: int = 300
     auto_pool_binance_min_quote_volume: float = 10_000_000
     auto_pool_candidate_max_from_sources: int = 100
     auto_pool_cooldown_hours: int = 24

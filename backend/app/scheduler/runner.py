@@ -19,6 +19,7 @@ _failure_stats: Dict[str, Dict[str, Any]] = {
     "auto_init_missing_history": {"total_failures": 0, "consecutive_failures": 0, "last_error": None},
     "incremental_run": {"total_failures": 0, "consecutive_failures": 0, "last_error": None},
     "daily_gap_inspect": {"total_failures": 0, "consecutive_failures": 0, "last_error": None},
+    "daily_gap_backfill": {"total_failures": 0, "consecutive_failures": 0, "last_error": None},
 }
 
 
@@ -197,6 +198,27 @@ def run_daily_gap_inspection() -> None:
                 retry_count=settings.scheduler_step_retry_count,
                 retry_delay_seconds=settings.scheduler_step_retry_delay_seconds,
             )
+            backfill_ok = None
+            backfill_error = None
+            backfill_attempts = 0
+            backfill_task = None
+            missing_points_total = 0
+            if ok and task and isinstance(task.summary, dict):
+                missing_points_total = int(task.summary.get("missing_points_total", 0) or 0)
+
+            if ok and settings.gap_auto_backfill_enabled and missing_points_total > 0:
+                backfill_ok, backfill_task, backfill_error, backfill_attempts = _run_with_retry(
+                    step_name="daily_gap_backfill",
+                    fn=lambda: CollectorService.run_gap_backfill(
+                        db=db,
+                        hours=settings.gap_auto_backfill_hours,
+                        max_symbols=settings.gap_auto_backfill_max_symbols,
+                        only_missing=settings.gap_auto_backfill_only_missing,
+                    ),
+                    retry_count=settings.scheduler_step_retry_count,
+                    retry_delay_seconds=settings.scheduler_step_retry_delay_seconds,
+                )
+
             print(
                 "[scheduler] daily gap inspection done",
                 {
@@ -205,6 +227,16 @@ def run_daily_gap_inspection() -> None:
                     "task_id": task.id if ok and task else None,
                     "status": task.status if ok and task else "failed",
                     "error": error,
+                    "missing_points_total": missing_points_total,
+                    "auto_backfill": {
+                        "enabled": settings.gap_auto_backfill_enabled,
+                        "triggered": bool(ok and settings.gap_auto_backfill_enabled and missing_points_total > 0),
+                        "ok": backfill_ok,
+                        "attempts": backfill_attempts,
+                        "task_id": backfill_task.id if backfill_ok and backfill_task else None,
+                        "status": backfill_task.status if backfill_ok and backfill_task else None,
+                        "error": backfill_error,
+                    },
                     "failure_stats": _snapshot_failure_stats(),
                 },
             )
@@ -262,6 +294,7 @@ def start_scheduler() -> None:
             "gap_check_enabled": settings.gap_check_enabled,
             "gap_check_hour": settings.gap_check_hour,
             "gap_check_minute": settings.gap_check_minute,
+            "gap_auto_backfill_enabled": settings.gap_auto_backfill_enabled,
         },
     )
 
